@@ -1,34 +1,54 @@
 const pool = require('../config/db');
 const bcrypt = require('bcryptjs');
-const { generateToken } = require('../utils/token');
+const { generateAccessToken, generateRefreshToken } = require('../utils/token');
 
-// REGISTER
 exports.register = async (req, res, next) => {
   try {
     const { name, email, password, role = "user" } = req.body;
 
+    // Check existing user
     const [existing] = await pool.query(
-      "SELECT * FROM users WHERE email = ?",
+      "SELECT id FROM users WHERE email = ?",
       [email]
     );
 
-    if (existing.length > 0) {
+    if (existing.length) {
       return res.status(400).json({ message: "Email already exists" });
     }
 
+    // Hash password
     const hashedPassword = await bcrypt.hash(password, 10);
 
+    // Insert user
     const [result] = await pool.query(
       "INSERT INTO users (name, email, password, role) VALUES (?, ?, ?, ?)",
       [name, email, hashedPassword, role]
     );
 
-    res.json({
+    const user = {
       id: result.insertId,
+      email,
+      role,
+    };
+
+    // Generate tokens
+    const accessToken = generateAccessToken(user);
+    const refreshToken = generateRefreshToken(user);
+
+    // Save refresh token
+    await pool.query(
+      "UPDATE users SET refreshToken=? WHERE id=?",
+      [refreshToken, user.id]
+    );
+
+    // Respond same as login
+    res.status(201).json({
+      id: user.id,
       name,
       email,
       role,
-      token: generateToken({ id: result.insertId, email, role }),
+      accessToken,
+      refreshToken,
     });
 
   } catch (err) {
@@ -47,23 +67,31 @@ exports.login = async (req, res, next) => {
       [email]
     );
 
-    if (rows.length === 0) {
+    if (!rows.length) {
       return res.status(400).json({ message: "Invalid email or password" });
     }
 
     const user = rows[0];
 
     const isMatch = await bcrypt.compare(password, user.password);
-
     if (!isMatch) {
       return res.status(400).json({ message: "Invalid email or password" });
     }
+
+    const accessToken = generateAccessToken(user);
+    const refreshToken = generateRefreshToken(user);
+
+    await pool.query(
+      "UPDATE users SET refreshToken=? WHERE id=?",
+      [refreshToken, user.id]
+    );
 
     res.json({
       id: user.id,
       name: user.name,
       email: user.email,
-      token: generateToken(user),
+      accessToken,
+      refreshToken,
     });
 
   } catch (err) {
@@ -73,28 +101,39 @@ exports.login = async (req, res, next) => {
 
 
 exports.refreshToken = async (req, res) => {
-  const { token } = req.body;
-  if (!token) return res.status(401).json({ message: "Refresh token missing" });
+  const { refreshToken } = req.body;
+  if (!refreshToken) {
+    return res.status(401).json({ message: "Refresh token missing" });
+  }
 
   const [rows] = await pool.query(
     "SELECT * FROM users WHERE refreshToken=?",
-    [token]
+    [refreshToken]
   );
+
+  if (!rows.length) {
+    return res.status(403).json({ message: "Invalid refresh token" });
+  }
+
   const user = rows[0];
 
-  if (!user) return res.status(403).json({ message: "Invalid refresh token" });
+  jwt.verify(refreshToken, process.env.REFRESH_SECRET, (err) => {
+    if (err) {
+      return res.status(403).json({ message: "Expired refresh token" });
+    }
 
-  jwt.verify(token, process.env.REFRESH_SECRET, (err) => {
-    if (err) return res.status(403).json({ message: "Expired refresh token" });
+    const newAccessToken = generateAccessToken(user);
+    const newRefreshToken = generateRefreshToken(user);
 
-    const accessToken = generateAccessToken(user);
-    const newRefresh = generateRefreshToken(user);
+    pool.query(
+      "UPDATE users SET refreshToken=? WHERE id=?",
+      [newRefreshToken, user.id]
+    );
 
-    pool.query("UPDATE users SET refreshToken=? WHERE id=?", [
-      newRefresh,
-      user.id,
-    ]);
-
-    res.json({ accessToken, refreshToken: newRefresh });
+    res.json({
+      accessToken: newAccessToken,
+      refreshToken: newRefreshToken,
+    });
   });
 };
+

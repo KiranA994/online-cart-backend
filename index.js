@@ -28,6 +28,31 @@ app.use(errorMiddleware);
 
 const PORT = process.env.PORT || 5000;
 
+// const bcrypt = require('bcryptjs');
+// const pool = require("./config/db");  // adjust path
+
+// async function createDefaultAdmin() {
+//   const [rows] = await pool.query(
+//     "SELECT * FROM users WHERE role = 'admin' LIMIT 1"
+//   );
+
+//   if (rows.length === 0) {
+//     const hashed = await bcrypt.hash("Admin@123", 10);
+
+//     await pool.query(
+//       "INSERT INTO users (name, email, password, role) VALUES (?, ?, ?, ?)",
+//       ["Admin", "admin@example.com", hashed, "admin"]
+//     );
+
+//     console.log("Default admin created");
+//   } else {
+//     console.log("Admin already exists");
+//   }
+// }
+
+// createDefaultAdmin();
+
+
 app.get('/', (req, res) => {
   res.send('Hello, Node.js!');
 });
